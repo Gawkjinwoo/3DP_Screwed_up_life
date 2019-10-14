@@ -7,3 +7,5 @@ Self stabilized arduino quadcopter program:
                Performance of quadcopter(Stabilization) was more excellent than we expected.
                However, it was hard to control the height of quad and landing.
                Next goal will be height control and more stable landing.
+# Photos              
+![KakaoTalk_20191014_184027842](https://user-images.githubusercontent.com/39939370/66743373-b6ce2d00-eeb4-11e9-9b33-3ce38ae9ddd7.jpg)
