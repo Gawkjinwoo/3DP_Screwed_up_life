@@ -34,9 +34,9 @@ Servo MOTOR_1, MOTOR_2, MOTOR_3, MOTOR_4;
 
 float ERROR_PITCH, ERROR_PITCH_PREVIOUS = 0, ERROR_ROLL, ERROR_ROLL_PREVIOUS = 0, ERROR_YAW, ERROR_YAW_PREVIOUS = 0;
 float I_CONTROL_PITCH = 0, I_CONTROL_ROLL = 0, I_CONTROL_YAW = 0;
-float P_GAIN_PITCH = 0.8, I_GAIN_PITCH = 0.5, D_GAIN_PITCH = 55.0;
-float P_GAIN_ROLL = 0.8, I_GAIN_ROLL = 0.5, D_GAIN_ROLL = 55.0;
-float P_GAIN_YAW = 0, I_GAIN_YAW = 0, D_GAIN_YAW = 0;
+float P_GAIN_PITCH = 0.8, I_GAIN_PITCH = 0.2, D_GAIN_PITCH = 55.0;
+float P_GAIN_ROLL = 0.8, I_GAIN_ROLL = 0.2, D_GAIN_ROLL = 55.0;
+float P_GAIN_YAW = 0.8, I_GAIN_YAW = 0.05, D_GAIN_YAW = 55.0;
 float P_CONTROL_ROLL = 0, D_CONTROL_ROLL = 0;
 float P_CONTROL_PITCH = 0, D_CONTROL_PITCH = 0;
 float P_CONTROL_YAW = 0, D_CONTROL_YAW = 0;
@@ -45,13 +45,11 @@ float dT, DT;
 //                    VOID SETUP                    //
 //--------------------------------------------------//
 void setup(){
-  Serial.begin(38400);
   pinMode(LED_PIN, OUTPUT);
   pinMode(PAUSE_SIGNAL_PIN, INPUT);
   pinMode(START_SIGNAL_PIN, INPUT);
 
-  intro();
-  PAUSE();
+  while(digitalRead(START_SIGNAL_PIN) == 0);
   SET_MPU6050();
   CALIBRATE_MPU6050();
   SET_MOTOR();
@@ -60,8 +58,6 @@ void setup(){
   PCMSK0 |= (1 << PCINT1);                                     //Set PCINT1 (digital input 9)to trigger an interrupt on state change.
   PCMSK0 |= (1 << PCINT2);                                     //Set PCINT2 (digital input 10)to trigger an interrupt on state change.
   PCMSK0 |= (1 << PCINT3);                                     //Set PCINT3 (digital input 11)to trigger an interrupt on state change.
-  
-  Serial.println("Waiting for START_SIGNAL_PIN interrupt.");
   while(digitalRead(START_SIGNAL_PIN) == 0);
   TIME_LAST_ANGLE = millis();
   TIME_LAST_PID = millis();
@@ -75,14 +71,10 @@ void loop(){
   GET_ANGLE();
   TIME_LAST_ANGLE = TIME_NOW_ANGLE;
   TIME_NOW_PID = millis();
-  PID_MOTOR(ROLL_INPUT, PITCH_INPUT, YAW_INPUT, 0.0, 0.0);
+  PID_MOTOR(ROLL_INPUT, PITCH_INPUT, YAW_INPUT, 0.0, 0.0, 0.0);
   TIME_LAST_PID = TIME_NOW_PID;
   UPDATE_MOTOR();
 
-  //Serial.print("ROLL: "), Serial.print(ROLL), Serial.print("\t"), Serial.print(CONTROLLED_VALUE_ROLL), Serial.print("\t");
-  Serial.print("Receive 3: "), Serial.print(receiver_input_channel_3), Serial.print("\t");
-  Serial.println();
-  PAUSE_DATA_SERIAL();
   PAUSE_DATA_ESP32();
 }
 //--------------------------------------------------//
@@ -119,7 +111,7 @@ void GET_ANGLE(){
 }
 
 //RC transmitter has minimum : 1112(1116) ~ 1912(1916)
-void PID_MOTOR(float ROLL, float PITCH, float YAW, float DESIRED_ANGLE_PITCH, float DESIRED_ANGLE_ROLL){
+void PID_MOTOR(float ROLL, float PITCH, float YAW, float DESIRED_ANGLE_PITCH, float DESIRED_ANGLE_ROLL, float DESIRED_ANGLE_YAW){
     dT = (TIME_NOW_PID - TIME_LAST_PID)/1000.0;
 
     //Pitch Calculation
@@ -147,49 +139,39 @@ void PID_MOTOR(float ROLL, float PITCH, float YAW, float DESIRED_ANGLE_PITCH, fl
     if(CONTROLLED_VALUE_ROLL >= ROLL_RATE_MAX) CONTROLLED_VALUE_ROLL = ROLL_RATE_MAX;
     else if(CONTROLLED_VALUE_ROLL <= -1 * ROLL_RATE_MAX) CONTROLLED_VALUE_ROLL = -1 * ROLL_RATE_MAX;
     ERROR_ROLL_PREVIOUS = ERROR_ROLL;
+
+    //Yaw Calculation
+    ERROR_YAW = DESIRED_ANGLE_YAW - YAW;
+    P_CONTROL_YAW = P_GAIN_YAW * ERROR_YAW;
+    I_CONTROL_YAW = I_GAIN_YAW * ERROR_YAW * dT + I_CONTROL_YAW;
+    D_CONTROL_YAW = D_GAIN_YAW * (ERROR_YAW - ERROR_YAW_PREVIOUS);
+    if(I_CONTROL_YAW >= YAW_RATE_MAX) I_CONTROL_YAW = YAW_RATE_MAX;
+    else if(I_CONTROL_YAW <= -1 * YAW_RATE_MAX) I_CONTROL_YAW = -1 * YAW_RATE_MAX;
+
+    CONTROLLED_VALUE_YAW = P_CONTROL_YAW + I_CONTROL_YAW + D_CONTROL_YAW;
+    if(CONTROLLED_VALUE_YAW >= YAW_RATE_MAX) CONTROLLED_VALUE_YAW = YAW_RATE_MAX;
+    else if(CONTROLLED_VALUE_YAW <= -1 * YAW_RATE_MAX) CONTROLLED_VALUE_YAW = -1 * YAW_RATE_MAX;
+    ERROR_YAW_PREVIOUS = ERROR_YAW;
 }
 
 void UPDATE_MOTOR(){
-  MOTOR_OUTPUT_1 = constrain(1350 + CONTROLLED_VALUE_PITCH - CONTROLLED_VALUE_ROLL, MIN_SIGNAL, MAX_SIGNAL);
-  MOTOR_OUTPUT_2 = constrain(1350 - CONTROLLED_VALUE_PITCH + CONTROLLED_VALUE_ROLL, MIN_SIGNAL, MAX_SIGNAL);
-  MOTOR_OUTPUT_3 = constrain(1350 - CONTROLLED_VALUE_PITCH - CONTROLLED_VALUE_ROLL, MIN_SIGNAL, MAX_SIGNAL);
-  MOTOR_OUTPUT_4 = constrain(1350 + CONTROLLED_VALUE_PITCH + CONTROLLED_VALUE_ROLL, MIN_SIGNAL, MAX_SIGNAL);
+  MOTOR_OUTPUT_1 = constrain((receiver_input_channel_3 - 50) + CONTROLLED_VALUE_PITCH - CONTROLLED_VALUE_ROLL + CONTROLLED_VALUE_YAW, MIN_SIGNAL, MAX_SIGNAL);
+  MOTOR_OUTPUT_2 = constrain((receiver_input_channel_3 - 50) - CONTROLLED_VALUE_PITCH + CONTROLLED_VALUE_ROLL + CONTROLLED_VALUE_YAW, MIN_SIGNAL, MAX_SIGNAL);
+  MOTOR_OUTPUT_3 = constrain((receiver_input_channel_3 - 50) - CONTROLLED_VALUE_PITCH - CONTROLLED_VALUE_ROLL - CONTROLLED_VALUE_YAW, MIN_SIGNAL, MAX_SIGNAL);
+  MOTOR_OUTPUT_4 = constrain((receiver_input_channel_3 - 50) + CONTROLLED_VALUE_PITCH + CONTROLLED_VALUE_ROLL - CONTROLLED_VALUE_YAW, MIN_SIGNAL, MAX_SIGNAL);
   MOTOR_1.writeMicroseconds(MOTOR_OUTPUT_1);
   MOTOR_2.writeMicroseconds(MOTOR_OUTPUT_2);
   MOTOR_3.writeMicroseconds(MOTOR_OUTPUT_3);
   MOTOR_4.writeMicroseconds(MOTOR_OUTPUT_4);
 }
 
-inline void PAUSE(){
-    while(Serial.available() && Serial.read());
-    while(!Serial.available());
-    while(Serial.available() && Serial.read());
-}
-
 inline void PAUSE_DATA_ESP32(){
     if(digitalRead(PAUSE_SIGNAL_PIN) == HIGH){
-      Serial.println(F("Stop collecting_ESP32"));
       MOTOR_1.writeMicroseconds(MIN_SIGNAL);
       MOTOR_2.writeMicroseconds(MIN_SIGNAL);
       MOTOR_3.writeMicroseconds(MIN_SIGNAL);
       MOTOR_4.writeMicroseconds(MIN_SIGNAL);
       while(true) delay(10000);
-    }
-}
-
-inline void PAUSE_DATA_SERIAL(){
-    if(Serial.available() && Serial.read() == '1'){
-      Serial.println(F("Stop collecting_Serial"));
-      MOTOR_1.writeMicroseconds(MIN_SIGNAL);
-      MOTOR_2.writeMicroseconds(MIN_SIGNAL);
-      MOTOR_3.writeMicroseconds(MIN_SIGNAL);
-      MOTOR_4.writeMicroseconds(MIN_SIGNAL);
-      while(true){
-        if(Serial.available() && Serial.read() == '0'){
-          Serial.println(F("Continue collecting"));
-          break;
-        }
-      }
     }
 }
 
@@ -205,12 +187,10 @@ void CALIBRATE_MPU6050(){
   int NUM_READING = 2000;
   int i;
 
-  Serial.print(F("MPU6050 Calibration is started"));
   for(i = 0; i < 2000; i++){
     GET_RAW_DATA();
   }
   for(i = 0; i < NUM_READING; i++){
-    if(i % 125 == 0) Serial.print(".");
     GET_RAW_DATA();
     X_ACC_BASE += X_ACC;
     Y_ACC_BASE += Y_ACC;
@@ -227,8 +207,6 @@ void CALIBRATE_MPU6050(){
   Y_GYRO_BASE /= NUM_READING;
   Z_GYRO_BASE /= NUM_READING;
 
-  Serial.println();
-  Serial.println(F("MPU6050 Calibration is done!"));
   digitalWrite(LED_PIN, HIGH);
 }
 
@@ -242,7 +220,6 @@ void SET_MOTOR(){
   MOTOR_3.writeMicroseconds(MIN_SIGNAL);
   MOTOR_4.writeMicroseconds(MIN_SIGNAL);
   delay(2000);
-  Serial.println(F("Motor Setup is done."));
 }
 
 void GET_RAW_DATA(){
@@ -310,21 +287,4 @@ ISR(PCINT0_vect){
     last_channel_4 = 0;                                        //Remember current input state
     receiver_input_channel_4 = current_time - timer_4;         //Channel 4 is current_time - timer_4
   }
-}
-
-void intro(){
-  Serial.println(F("//////////////////////////////////////////////////////////////////////"));
-  Serial.println(F("//    Team name: Screwed Up Life                                    //"));
-  Serial.println(F("//    Program purpose: Self stabilized Quadcopter                   //"));
-  Serial.println(F("//    Contact: sv77777123@snu.ac.kr                                 //"));
-  Serial.println(F("//    Department of nuclear engineering, Seoul national university  //"));
-  Serial.println(F("//    Seoul, Republic of Korea(South Korea)                         //"));
-  Serial.println(F("//                                                                  //"));
-  Serial.println(F("//                                                                  //"));
-  Serial.println(F("//    Project members: 차원석, 조병현, 곽진우, 장다예, 이승미, 이승민      //"));
-  Serial.println(F("//////////////////////////////////////////////////////////////////////"));
-  Serial.println();
-  Serial.println(F("Serial communication start..."));
-  Serial.println(F("Check the battery connection and horizontal attitude."));
-  Serial.println(F("If all of the condition is right, Please input any character."));
 }
